@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { normalizeTranscription } from '../src/transcriber.js';
 import { DETECTION_MODEL, TRANSCRIPTION_MODEL } from '../src/models.js';
 
-test('OpenAI model constants are fixed to cloud-hosted models', () => {
-  assert.equal(TRANSCRIPTION_MODEL, 'gpt-4o-mini-transcribe');
-  assert.equal(DETECTION_MODEL, 'gpt-4.1-mini');
+test('LFM model constants are fixed to hackathon models', () => {
+  assert.equal(TRANSCRIPTION_MODEL, 'LiquidAI/LFM2.5-Audio-1.5B-JP');
+  assert.equal(DETECTION_MODEL, 'LiquidAI/LFM2.5-8B-A1B');
 });
 
 test('normalizeTranscription accepts common API response shapes', () => {

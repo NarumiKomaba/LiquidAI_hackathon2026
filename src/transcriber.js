@@ -1,34 +1,37 @@
 import { DEFAULT_TRANSCRIPTION_API_URL, TRANSCRIPTION_MODEL } from './models.js';
+import { assertTokenIfNeeded, buildInferenceHeaders, resolveInferenceAdapter } from './inferenceAdapters.js';
 
 export async function transcribeAudio({ audioBase64, mimeType = 'audio/webm' }) {
-  const token = process.env.TRANSCRIPTION_API_KEY || process.env.OPENAI_API_KEY;
+  const token = process.env.HF_TOKEN || process.env.TRANSCRIPTION_API_KEY;
+  const endpoint = process.env.TRANSCRIPTION_API_URL || DEFAULT_TRANSCRIPTION_API_URL;
+  const model = process.env.TRANSCRIPTION_MODEL || TRANSCRIPTION_MODEL;
+  const adapter = resolveInferenceAdapter({
+    provider: process.env.TRANSCRIPTION_PROVIDER || process.env.INFERENCE_PROVIDER,
+    url: endpoint
+  });
 
   if (!audioBase64) {
     throw new Error('audioBase64 is required');
   }
 
-  if (!token) {
-    throw new Error('OPENAI_API_KEY or TRANSCRIPTION_API_KEY is required for OpenAI audio transcription');
-  }
+  assertTokenIfNeeded({ adapter, token, label: 'TRANSCRIPTION' });
 
   const audioBuffer = Buffer.from(audioBase64, 'base64');
-  const formData = new FormData();
-  formData.append('model', process.env.TRANSCRIPTION_MODEL || TRANSCRIPTION_MODEL);
-  formData.append('language', 'ja');
-  formData.append('response_format', 'json');
-  formData.append('file', new Blob([audioBuffer], { type: mimeType }), `recording.${extensionForMimeType(mimeType)}`);
-
-  const response = await fetch(process.env.TRANSCRIPTION_API_URL || DEFAULT_TRANSCRIPTION_API_URL, {
+  const response = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`
-    },
-    body: formData
+    headers: buildInferenceHeaders({
+      adapter,
+      token,
+      contentType: mimeType,
+      waitForModel: true,
+      model
+    }),
+    body: audioBuffer
   });
 
   if (!response.ok) {
     const details = await response.text().catch(() => '');
-    throw new Error(`OpenAI transcription API responded with ${response.status}${details ? `: ${details.slice(0, 240)}` : ''}`);
+    throw new Error(`LFM2.5-Audio-JP transcription API responded with ${response.status}${details ? `: ${details.slice(0, 240)}` : ''}`);
   }
 
   const contentType = response.headers.get('content-type') ?? '';
@@ -36,7 +39,8 @@ export async function transcribeAudio({ audioBase64, mimeType = 'audio/webm' }) 
   const text = normalizeTranscription(payload);
 
   return {
-    model: process.env.TRANSCRIPTION_MODEL || TRANSCRIPTION_MODEL,
+    adapter,
+    model,
     text,
     raw: payload
   };
@@ -49,12 +53,4 @@ export function normalizeTranscription(payload) {
   if (Array.isArray(payload) && typeof payload[0]?.text === 'string') return payload[0].text.trim();
   if (typeof payload?.generated_text === 'string') return payload.generated_text.trim();
   return '';
-}
-
-function extensionForMimeType(mimeType) {
-  if (mimeType.includes('mp4')) return 'mp4';
-  if (mimeType.includes('mpeg')) return 'mp3';
-  if (mimeType.includes('wav')) return 'wav';
-  if (mimeType.includes('ogg')) return 'ogg';
-  return 'webm';
 }

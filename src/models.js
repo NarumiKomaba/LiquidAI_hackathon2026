@@ -1,5 +1,5 @@
-export const TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
-export const DETECTION_MODEL = 'gpt-4.1-mini';
+export const TRANSCRIPTION_MODEL = 'LiquidAI/LFM2.5-Audio-1.5B-JP';
+export const DETECTION_MODEL = 'LiquidAI/LFM2.5-8B-A1B';
 
-export const DEFAULT_TRANSCRIPTION_API_URL = 'https://api.openai.com/v1/audio/transcriptions';
-export const DEFAULT_DETECTION_API_URL = 'https://api.openai.com/v1/chat/completions';
+export const DEFAULT_TRANSCRIPTION_API_URL = `https://api-inference.huggingface.co/models/${TRANSCRIPTION_MODEL}`;
+export const DEFAULT_DETECTION_API_URL = 'https://router.huggingface.co/v1/chat/completions';

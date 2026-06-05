@@ -1,4 +1,5 @@
 import { DEFAULT_DETECTION_API_URL, DETECTION_MODEL } from './models.js';
+import { assertTokenIfNeeded, buildInferenceHeaders, resolveInferenceAdapter } from './inferenceAdapters.js';
 
 export const SIGNALS = {
   is_authority: {
@@ -33,10 +34,16 @@ const EMPTY_ANALYSIS = Object.fromEntries(
 );
 
 export async function analyzeUtterance(text, options = {}) {
-  const token = process.env.DETECTOR_API_KEY || process.env.OPENAI_API_KEY;
-  if (!options.forceLocal && token) {
+  const token = process.env.HF_TOKEN || process.env.DETECTOR_API_KEY;
+  const endpoint = process.env.DETECTOR_API_URL || DEFAULT_DETECTION_API_URL;
+  const adapter = resolveInferenceAdapter({
+    provider: process.env.DETECTOR_PROVIDER || process.env.INFERENCE_PROVIDER,
+    url: endpoint
+  });
+
+  if (!options.forceLocal && (token || adapter === 'local')) {
     try {
-      return normalizeAnalysis(await analyzeWithOpenAI(text, token));
+      return normalizeAnalysis(await analyzeWithLfm(text, { token, endpoint, adapter }));
     } catch (error) {
       console.warn(`LLM detector failed; falling back to local rules: ${error.message}`);
     }
@@ -45,55 +52,38 @@ export async function analyzeUtterance(text, options = {}) {
   return localAnalyze(text);
 }
 
-async function analyzeWithOpenAI(text, token) {
+async function analyzeWithLfm(text, { token, endpoint, adapter }) {
+  assertTokenIfNeeded({ adapter, token, label: 'DETECTOR' });
+
   const schemaInstruction = `あなたは電話特殊詐欺のリアルタイム検知器です。入力発話を評価し、必ず次のJSONだけを返してください。該当しない項目はstatusをfalse、textを空文字にしてください。キーは is_authority, has_threat, has_secrecy, ask_financial, demand_action です。形式例: {"is_authority":{"status":true,"text":"〇〇警察の生活安全課です"},"has_threat":{"status":true,"text":"あなたも疑われています"},"has_secrecy":{"status":true,"text":"捜査は秘密なので誰にも言わないで"},"ask_financial":{"status":true,"text":"今の残高はいくらですか"},"demand_action":{"status":true,"text":"今すぐATMにいけ"}}`;
 
-  const response = await fetch(process.env.DETECTOR_API_URL || DEFAULT_DETECTION_API_URL, {
+  const model = process.env.DETECTOR_MODEL || DETECTION_MODEL;
+  const response = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
+    headers: buildInferenceHeaders({
+      adapter,
+      token,
+      contentType: 'application/json',
+      model
+    }),
     body: JSON.stringify({
-      model: process.env.DETECTOR_MODEL || DETECTION_MODEL,
+      model,
       messages: [
         { role: 'system', content: schemaInstruction },
         { role: 'user', content: text }
       ],
       temperature: 0,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'fraud_signal_analysis',
-          strict: true,
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['is_authority', 'has_threat', 'has_secrecy', 'ask_financial', 'demand_action'],
-            properties: Object.fromEntries(
-              Object.keys(SIGNALS).map((key) => [key, {
-                type: 'object',
-                additionalProperties: false,
-                required: ['status', 'text'],
-                properties: {
-                  status: { type: 'boolean' },
-                  text: { type: 'string' }
-                }
-              }])
-            )
-          }
-        }
-      }
+      response_format: { type: 'json_object' }
     })
   });
 
   if (!response.ok) {
     const details = await response.text().catch(() => '');
-    throw new Error(`OpenAI detector API responded with ${response.status}${details ? `: ${details.slice(0, 240)}` : ''}`);
+    throw new Error(`LFM2.5 detector API responded with ${response.status}${details ? `: ${details.slice(0, 240)}` : ''}`);
   }
 
   const payload = await response.json();
-  const content = payload.choices?.[0]?.message?.content ?? payload.output_text ?? JSON.stringify(payload);
+  const content = payload.analysis ?? payload.choices?.[0]?.message?.content ?? payload.output_text ?? JSON.stringify(payload);
   return typeof content === 'string' ? JSON.parse(content) : content;
 }
 

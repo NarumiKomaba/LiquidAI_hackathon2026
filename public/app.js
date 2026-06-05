@@ -28,6 +28,7 @@ const elements = {
   riskMessage: document.querySelector('#riskMessage'),
   signalGrid: document.querySelector('#signalGrid'),
   alertBanner: document.querySelector('#alertBanner'),
+  brandImage: document.querySelector('#brandImage'),
   transcriptionNote: document.querySelector('#transcriptionNote')
 };
 
@@ -136,13 +137,16 @@ function renderUtterances() {
 function updateDashboard(result) {
   const score = Number(result.score ?? 0);
   const riskKey = result.riskLevel?.key ?? 'safe';
+  const isDanger = score >= 75;
   elements.scoreValue.textContent = score;
   elements.scoreMeter.value = score;
   elements.riskBadge.className = `risk-badge ${riskKey}`;
   elements.riskBadge.textContent = result.riskLevel?.label ?? '低リスク';
   elements.riskMessage.textContent = result.riskLevel?.message ?? '';
-  elements.appShell.classList.toggle('danger-mode', score >= 75);
-  elements.alertBanner.classList.toggle('hidden', score < 75);
+  elements.appShell.classList.toggle('danger-mode', isDanger);
+  elements.alertBanner.classList.toggle('hidden', !isDanger);
+  elements.brandImage.src = isDanger ? elements.brandImage.dataset.dangerSrc : elements.brandImage.dataset.safeSrc;
+  elements.brandImage.alt = isDanger ? 'SAFi 危険検知' : 'SAFi';
   renderSignals(result);
 }
 
