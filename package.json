@@ -1,0 +1,23 @@
+{
+  "name": "safi",
+  "version": "1.0.0",
+  "description": "SAFi - real-time AI-assisted special fraud detection web app for phone calls",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "fraud-detection",
+    "nodejs",
+    "realtime",
+    "ai",
+    "safi"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

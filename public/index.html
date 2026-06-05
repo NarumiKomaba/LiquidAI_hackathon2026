@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SAFi | リアルタイム特殊詐欺AI検知</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main id="appShell" class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">SAFi</p>
+          <h1>特殊詐欺AI検知</h1>
+          <p class="lead">文字起こし: gpt-4o-mini-transcribe・検知: gpt-4.1-mini</p>
+        </div>
+        <div class="controls">
+          <button id="startButton" class="primary">録音開始</button>
+          <button id="stopButton" class="secondary" disabled>停止</button>
+        </div>
+      </header>
+
+      <section id="alertBanner" class="alert-banner hidden" role="alert" aria-live="assertive">
+        <strong>危険です</strong>
+        <span>通話を切り、家族や警察相談専用電話 #9110 に相談してください。</span>
+      </section>
+
+      <section class="main-card">
+        <div class="score-block">
+          <span id="riskBadge" class="risk-badge safe">低リスク</span>
+          <div class="score-row">
+            <span id="scoreValue">0</span><small>/100</small>
+          </div>
+          <meter id="scoreMeter" min="0" max="100" value="0"></meter>
+          <p id="riskMessage">録音または手入力で判定します。</p>
+        </div>
+
+        <div class="transcript-block">
+          <div class="section-title">
+            <h2>直近5発話</h2>
+            <span id="recordingStatus">待機中</span>
+          </div>
+          <ol id="utteranceList" class="utterance-list"></ol>
+          <form id="manualForm" class="manual-form">
+            <input id="manualInput" type="text" placeholder="デモ用：発話を手入力" autocomplete="off" />
+            <button type="submit">解析</button>
+          </form>
+          <p id="transcriptionNote" class="note">録音は数秒ごとにOpenAIの音声文字起こしAPIへ送信します。</p>
+        </div>
+      </section>
+
+      <section class="signals-card">
+        <div class="section-title">
+          <h2>検知シグナル</h2>
+          <span>gpt-4.1-miniの構造化JSON出力をスコア化</span>
+        </div>
+        <div id="signalGrid" class="signal-grid"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
