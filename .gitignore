@@ -6,3 +6,6 @@ models/
 *.mp4
 __pycache__/
 .venv/
+
+# カナリア警告音だけは追跡対象にする（他の音声ファイルは除外のまま）
+!public/assets/canary.mp3

@@ -20,23 +20,13 @@
         </div>
         <div class="hero-copy">
           <p class="eyebrow">やさしく見守る通話ガード</p>
-          <h1>あやしい電話を、そっと早めにお知らせ</h1>
-          <p class="lead">LFM2.5-Audio-JPで発話を文字起こしし、LFM2.5で特殊詐欺のサインを見つけます。</p>
-          <div class="model-strip" aria-label="使用モデル">
-            <span>Audio: LFM2.5-Audio-1.5B-JP</span>
-            <span>LLM: LFM2.5</span>
-          </div>
+          <h1>Stay SAFE with SAFi.</h1>
         </div>
         <div class="controls">
           <button id="startButton" class="primary">録音開始</button>
           <button id="stopButton" class="secondary" disabled>停止</button>
         </div>
       </header>
-
-      <section id="alertBanner" class="alert-banner hidden" role="alert" aria-live="assertive">
-        <strong>危険です</strong>
-        <span>通話を切り、家族や警察相談専用電話 #9110 に相談してください。</span>
-      </section>
 
       <section class="main-card">
         <div class="score-block">
@@ -45,32 +35,27 @@
             <span id="scoreValue">0</span><small>/100</small>
           </div>
           <meter id="scoreMeter" min="0" max="100" value="0"></meter>
-          <p id="riskMessage">録音または手入力で、通話の安全度を確認します。</p>
+          <p id="riskMessage">録音すると、通話の安全度をリアルタイムに確認します。</p>
         </div>
 
         <div class="transcript-block">
           <div class="section-title">
-            <h2>直近5発話</h2>
+            <h2>発話ログ</h2>
             <span id="recordingStatus">待機中</span>
           </div>
           <ol id="utteranceList" class="utterance-list"></ol>
-          <form id="manualForm" class="manual-form">
-            <input id="manualInput" type="text" placeholder="デモ用：発話を手入力" autocomplete="off" />
-            <button type="submit">解析</button>
-          </form>
-          <p id="transcriptionNote" class="note">録音は数秒ごとにLFM2.5-Audio-JPへ送信して文字起こしします。</p>
         </div>
       </section>
 
       <section class="signals-card">
         <div class="section-title">
           <h2>検知シグナル</h2>
-          <span>LFM2.5のJSON出力をスコア化</span>
         </div>
         <div id="signalGrid" class="signal-grid"></div>
       </section>
     </main>
 
+    <audio id="canarySound" src="/assets/canary.mp3" preload="auto"></audio>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

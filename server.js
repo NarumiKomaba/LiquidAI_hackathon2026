@@ -17,7 +17,9 @@ const mimeTypes = new Map([
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
   ['.png', 'image/png'],
-  ['.svg', 'image/svg+xml']
+  ['.svg', 'image/svg+xml'],
+  ['.mp3', 'audio/mpeg'],
+  ['.wav', 'audio/wav']
 ]);
 
 const server = http.createServer(async (req, res) => {
@@ -55,10 +57,10 @@ async function handleAnalyze(req, res) {
   try {
     const body = await readJsonBody(req);
     const utterances = Array.isArray(body?.utterances) ? body.utterances : [];
+    // latch スコアリングのため会話全体を渡す（過去に立ったシグナルも保持される）
     const cleanUtterances = utterances
       .map((item) => String(item ?? '').trim())
-      .filter(Boolean)
-      .slice(-5);
+      .filter(Boolean);
 
     if (cleanUtterances.length === 0) {
       return sendJson(res, 400, { error: 'utterances must contain at least one text item' });
