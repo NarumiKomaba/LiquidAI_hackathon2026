@@ -15,8 +15,7 @@
 
 body {
   margin: 0;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
   color: var(--black);
   background:
     radial-gradient(circle at 14% 0, var(--yellow) 0 190px, transparent 191px),
@@ -29,22 +28,20 @@ button, input { font: inherit; }
 h1, h2, p { margin-top: 0; }
 
 .app-shell {
-  height: 100vh;
-  padding: 20px 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  overflow: hidden;
+  min-height: 100vh;
+  padding: 24px;
   transition: background 0.2s ease, color 0.2s ease;
 }
 
 .app-shell.danger-mode {
   color: var(--white);
-  background: var(--black);
+  background:
+    radial-gradient(circle at 14% 0, var(--danger-red) 0 190px, transparent 191px),
+    linear-gradient(180deg, var(--black) 0, var(--black) 430px, var(--white) 431px),
+    var(--white);
 }
 
-.topbar, .main-card, .signals-card {
+.topbar, .main-card, .signals-card, .alert-banner {
   width: min(1120px, 100%);
   margin-right: auto;
   margin-left: auto;
@@ -56,10 +53,10 @@ h1, h2, p { margin-top: 0; }
   align-items: center;
   gap: 26px;
   padding: 24px;
-  flex: 0 0 auto;
   border: 2px solid var(--black);
   border-radius: 28px;
   background: color-mix(in srgb, var(--white) 94%, transparent);
+  box-shadow: 0 18px 0 color-mix(in srgb, var(--orange) 24%, var(--white));
 }
 
 .brand-lockup {
@@ -80,13 +77,14 @@ h1, h2, p { margin-top: 0; }
 }
 
 .danger-mode .topbar {
-  color: var(--black);
+  color: var(--white);
   border-color: var(--danger-red);
   background: var(--black);
+  box-shadow: 0 18px 0 var(--danger-red);
 }
 
 .danger-mode .brand-lockup {
-  background: var(--black);
+  background: var(--white);
 }
 
 .danger-mode .brand-lockup img {
@@ -134,9 +132,8 @@ h1, h2, p { margin-top: 0; }
 h1 {
   max-width: 720px;
   margin-bottom: 10px;
-  font-size: clamp(2.25rem, 4vw, 3.75rem);
-  font-weight: 900;
-  line-height: 1.12;
+  font-size: clamp(1.75rem, 3vw, 3rem);
+  line-height: 1.16;
   letter-spacing: 0;
 }
 
@@ -196,15 +193,35 @@ button:disabled {
   background: var(--white);
 }
 
+.alert-banner {
+  margin-top: 24px;
+  padding: 18px 20px;
+  border: 2px solid var(--black);
+  border-radius: 24px;
+  color: var(--black);
+  background: var(--yellow);
+  box-shadow: 0 10px 0 var(--orange);
+}
+
+.danger-mode .alert-banner {
+  color: var(--white);
+  border-color: var(--danger-red);
+  background: var(--black);
+  box-shadow: 0 10px 0 var(--danger-red);
+}
+
+.alert-banner strong {
+  display: block;
+  font-size: 1.15rem;
+}
+
 .hidden { display: none; }
 
 .main-card {
   display: grid;
   grid-template-columns: 340px 1fr;
   gap: 18px;
-  padding: 0;
-  flex: 1 1 auto;
-  min-height: 0;
+  padding: 34px 0 26px;
 }
 
 .score-block, .transcript-block, .signals-card {
@@ -212,17 +229,6 @@ button:disabled {
   border-radius: 26px;
   background: var(--white);
   padding: 24px;
-}
-
-/* main-card 内の枠は親(100vh)に合わせて縮み、はみ出した分は内部スクロールへ */
-.score-block, .transcript-block {
-  min-height: 0;
-}
-
-.transcript-block {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .danger-mode .score-block,
@@ -292,19 +298,6 @@ meter::-webkit-meter-bar {
 meter::-webkit-meter-optimum-value { background: var(--yellow); }
 meter::-webkit-meter-suboptimum-value { background: var(--orange); }
 meter::-webkit-meter-even-less-good-value { background: var(--orange); }
-meter::-moz-meter-bar { background: var(--yellow); }
-
-/* 危険モードはスコアバーの塗りを赤に */
-.danger-mode meter::-webkit-meter-bar {
-  border-color: var(--danger-red);
-  background: var(--white);
-}
-.danger-mode meter::-webkit-meter-optimum-value,
-.danger-mode meter::-webkit-meter-suboptimum-value,
-.danger-mode meter::-webkit-meter-even-less-good-value {
-  background: var(--danger-red);
-}
-.danger-mode meter::-moz-meter-bar { background: var(--danger-red); }
 
 .risk-badge {
   display: inline-flex;
@@ -342,7 +335,6 @@ meter::-moz-meter-bar { background: var(--yellow); }
 
 .section-title {
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -377,11 +369,9 @@ meter::-moz-meter-bar { background: var(--yellow); }
 }
 
 .utterance-list {
-  flex: 1 1 auto;
-  min-height: 0;
+  min-height: 180px;
   margin: 0;
   padding-left: 22px;
-  overflow-y: auto;
 }
 
 .utterance-list li {
@@ -441,7 +431,7 @@ meter::-moz-meter-bar { background: var(--yellow); }
 }
 
 .signals-card {
-  flex: 0 0 auto;
+  margin-bottom: 28px;
 }
 
 .signal-grid {

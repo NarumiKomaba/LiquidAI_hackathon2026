@@ -1,31 +1,20 @@
-import { DEFAULT_TRANSCRIPTION_API_URL, TRANSCRIPTION_MODEL } from './models.js';
-import { assertTokenIfNeeded, buildInferenceHeaders, resolveInferenceAdapter } from './inferenceAdapters.js';
+import { LOCAL_TRANSCRIPTION_API_URL, TRANSCRIPTION_MODEL } from './models.js';
 
 export async function transcribeAudio({ audioBase64, mimeType = 'audio/webm' }) {
-  const token = process.env.HF_TOKEN || process.env.TRANSCRIPTION_API_KEY;
-  const endpoint = process.env.TRANSCRIPTION_API_URL || DEFAULT_TRANSCRIPTION_API_URL;
+  const endpoint = process.env.TRANSCRIPTION_API_URL || LOCAL_TRANSCRIPTION_API_URL;
   const model = process.env.TRANSCRIPTION_MODEL || TRANSCRIPTION_MODEL;
-  const adapter = resolveInferenceAdapter({
-    provider: process.env.TRANSCRIPTION_PROVIDER || process.env.INFERENCE_PROVIDER,
-    url: endpoint
-  });
 
   if (!audioBase64) {
     throw new Error('audioBase64 is required');
   }
 
-  assertTokenIfNeeded({ adapter, token, label: 'TRANSCRIPTION' });
-
   const audioBuffer = Buffer.from(audioBase64, 'base64');
   const response = await fetch(endpoint, {
     method: 'POST',
-    headers: buildInferenceHeaders({
-      adapter,
-      token,
-      contentType: mimeType,
-      waitForModel: true,
-      model
-    }),
+    headers: {
+      'Content-Type': mimeType,
+      'X-SAFi-Model': model
+    },
     body: audioBuffer
   });
 
@@ -39,7 +28,6 @@ export async function transcribeAudio({ audioBase64, mimeType = 'audio/webm' }) 
   const text = normalizeTranscription(payload);
 
   return {
-    adapter,
     model,
     text,
     raw: payload

@@ -1,11 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeTranscription } from '../src/transcriber.js';
-import { DETECTION_MODEL, TRANSCRIPTION_MODEL } from '../src/models.js';
+import {
+  DETECTION_MODEL,
+  LOCAL_DETECTION_API_URL,
+  LOCAL_TRANSCRIPTION_API_URL,
+  TRANSCRIPTION_MODEL
+} from '../src/models.js';
 
 test('LFM model constants are fixed to hackathon models', () => {
   assert.equal(TRANSCRIPTION_MODEL, 'LiquidAI/LFM2.5-Audio-1.5B-JP');
-  assert.equal(DETECTION_MODEL, 'LiquidAI/LFM2.5-8B-A1B');
+  assert.equal(DETECTION_MODEL, TRANSCRIPTION_MODEL);
+});
+
+test('local inference URLs default to the downloaded model server', () => {
+  assert.equal(LOCAL_TRANSCRIPTION_API_URL, 'http://localhost:8088/transcribe');
+  assert.equal(LOCAL_DETECTION_API_URL, 'http://localhost:8088/v1/chat/completions');
 });
 
 test('normalizeTranscription accepts common API response shapes', () => {

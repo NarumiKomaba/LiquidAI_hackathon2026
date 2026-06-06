@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { analyzeUtterance, localAnalyze, scoreConversation } from './src/detector.js';
+import { analyzeUtterance, scoreConversation } from './src/detector.js';
 import { DETECTION_MODEL, TRANSCRIPTION_MODEL } from './src/models.js';
 import { transcribeAudio } from './src/transcriber.js';
 
@@ -66,19 +66,18 @@ async function handleAnalyze(req, res) {
       return sendJson(res, 400, { error: 'utterances must contain at least one text item' });
     }
 
-    const latestText = cleanUtterances.at(-1);
-    const latestAnalysis = await analyzeUtterance(latestText);
-    const scored = scoreConversation([
-      ...cleanUtterances.slice(0, -1).map((text) => ({ text, analysis: localAnalyze(text) })),
-      { text: latestText, analysis: latestAnalysis }
-    ]);
+    const analyzedUtterances = await Promise.all(
+      cleanUtterances.map(async (text) => ({ text, analysis: await analyzeUtterance(text) }))
+    );
+    const latest = analyzedUtterances.at(-1);
+    const scored = scoreConversation(analyzedUtterances);
 
     sendJson(res, 200, {
       app: 'SAFi',
       windowSize: cleanUtterances.length,
       latest: {
-        text: latestText,
-        analysis: latestAnalysis
+        text: latest.text,
+        analysis: latest.analysis
       },
       ...scored
     });

@@ -6,16 +6,14 @@ SAFi 最終版ローカル推論サーバーのテンプレートです。
 
 最終的にここへ差し込むもの:
 
-1. 日本語文字起こし用の fine-tuned LFM2.5-Audio モデル
-2. 特殊詐欺シグナル判定用の fine-tuned LFM2.5 テキストモデル
+1. 日本語文字起こしと特殊詐欺シグナル判定を兼ねる fine-tuned LFM2.5-Audio-JP モデル
 
 SAFi 本体側の想定設定:
 
-    export INFERENCE_PROVIDER="local"
     export TRANSCRIPTION_API_URL="http://localhost:8088/transcribe"
     export DETECTOR_API_URL="http://localhost:8088/v1/chat/completions"
     export TRANSCRIPTION_MODEL="./models/safi-lfm2.5-audio-jp"
-    export DETECTOR_MODEL="./models/safi-lfm2.5-detector"
+    export DETECTOR_MODEL="./models/safi-lfm2.5-audio-jp"
 
 このテンプレートでは FastAPI の形でAPIだけ先に固定しています。
 実際にモデルを読み込む処理は、採用するランタイムによって変わります。
@@ -42,7 +40,6 @@ from fastapi import FastAPI, Request
 
 
 AUDIO_MODEL_PATH = Path(os.getenv("SAFI_AUDIO_MODEL_PATH", "./models/safi-lfm2.5-audio-jp"))
-DETECTOR_MODEL_PATH = Path(os.getenv("SAFI_DETECTOR_MODEL_PATH", "./models/safi-lfm2.5-detector"))
 
 SIGNAL_KEYS = [
     "is_authority",
@@ -71,7 +68,7 @@ def load_audio_model(model_path: Path) -> Any:
 
     実装例の方向性:
     - liquid-audio runtime でローカルcheckpointを読み込む
-    - Transformers / Optimum で Hugging Face 形式のモデルを読み込む
+    - Transformers / Optimum でローカルに保存したモデルを読み込む
     - ONNX Runtime の session を作る
     - 専用CLIを subprocess で起動して、そのハンドルを返す
 
@@ -102,29 +99,12 @@ def run_audio_transcription(audio_model: Any, audio_path: Path, content_type: st
     raise NotImplementedError("ここに LFM2.5-Audio の文字起こし推論処理を書く")
 
 
-def load_detector_model(model_path: Path) -> Any:
-    """LFM2.5 の詐欺判定モデルを読み込む関数です。
-
-    ここに書くこと:
-    - `model_path` に置いた fine-tuned LFM2.5 モデルを読み込む
-    - tokenizer / model / pipeline / runtime session などを初期化する
-    - `run_detector_generation()` に渡せる形で返す
-
-    良い最終挙動:
-    - サーバー起動時に1回だけ読み込む
-    - 推論のたびにロードし直さない
-    - temperature は 0 またはそれに近い決定的設定にする
-    - 出力はSAFiが期待する5つのシグナルJSONに寄せる
-    """
-    raise NotImplementedError("ここに fine-tuned LFM2.5 詐欺判定モデルの読み込み処理を書く")
-
-
-def run_detector_generation(detector_model: Any, messages: list[dict[str, str]]) -> dict[str, Any]:
-    """LFM2.5 で特殊詐欺シグナルJSONを生成する関数です。
+def run_audio_llm_generation(audio_model: Any, messages: list[dict[str, str]]) -> dict[str, Any]:
+    """LFM2.5-Audio-JP の LLM 機能で特殊詐欺シグナルJSONを生成する関数です。
 
     ここに書くこと:
     - SAFi から届いた `messages` をプロンプトに変換する
-    - `detector_model` にプロンプトを渡して推論する
+    - `audio_model` にプロンプトを渡して LLM 推論する
     - モデル出力からJSON部分を取り出す
     - `normalize_analysis()` に通せる dict を返す
 
@@ -144,7 +124,7 @@ def run_detector_generation(detector_model: Any, messages: list[dict[str, str]])
     #
     # 実装イメージ:
     #
-    # raw_output = detector_model.generate(prompt, temperature=0)
+    # raw_output = audio_model.generate_text(prompt, temperature=0)
     # analysis = parse_analysis_json(raw_output)
     # return analysis
     #
@@ -152,11 +132,10 @@ def run_detector_generation(detector_model: Any, messages: list[dict[str, str]])
     # - デモを安定させるため temperature は 0 推奨です
     # - LLMが余計な文章を返す場合は `parse_analysis_json()` でJSONだけ抽出してください
     # - JSONが壊れている場合は `empty_analysis()` に落としても構いません
-    raise NotImplementedError(f"ここに LFM2.5 の詐欺判定推論処理を書く。Prompt: {prompt[:120]}")
+    raise NotImplementedError(f"ここに LFM2.5-Audio-JP のLLM推論処理を書く。Prompt: {prompt[:120]}")
 
 
 audio_model = load_audio_model(AUDIO_MODEL_PATH)
-detector_model = load_detector_model(DETECTOR_MODEL_PATH)
 
 
 @app.get("/health")
@@ -165,7 +144,6 @@ async def health() -> dict[str, Any]:
         "ok": True,
         "service": "SAFi local LFM inference",
         "audio_model": str(AUDIO_MODEL_PATH),
-        "detector_model": str(DETECTOR_MODEL_PATH),
     }
 
 
@@ -190,12 +168,12 @@ async def transcribe(request: Request) -> dict[str, Any]:
 async def chat_completions(request: Request) -> dict[str, Any]:
     body = await request.json()
     messages = body.get("messages", [])
-    analysis = normalize_analysis(run_detector_generation(detector_model, messages))
+    analysis = normalize_analysis(run_audio_llm_generation(audio_model, messages))
 
     return {
         "id": "safi-local-lfm",
         "object": "chat.completion",
-        "model": body.get("model", str(DETECTOR_MODEL_PATH)),
+        "model": body.get("model", str(AUDIO_MODEL_PATH)),
         "choices": [
             {
                 "index": 0,
@@ -210,7 +188,7 @@ async def chat_completions(request: Request) -> dict[str, Any]:
 
 
 def build_detector_prompt(messages: list[dict[str, str]]) -> str:
-    """SAFiから届いたchat messagesを、LFM2.5へ渡す1本のプロンプトに変換します。
+    """SAFiから届いたchat messagesを、LFM2.5-Audio-JPへ渡す1本のプロンプトに変換します。
 
     基本的にはこのまま使えます。
     ファインチューニング時のプロンプト形式が決まっている場合は、ここを合わせてください。
