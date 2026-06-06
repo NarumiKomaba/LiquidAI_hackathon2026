@@ -6,7 +6,6 @@ const SIGNAL_META = {
   demand_action: '即時行動要求'
 };
 
-const MAX_UTTERANCES = 5;
 const RECORDING_SLICE_MS = 4500;
 const utterances = [];
 let mediaRecorder;
@@ -20,33 +19,26 @@ const elements = {
   stopButton: document.querySelector('#stopButton'),
   recordingStatus: document.querySelector('#recordingStatus'),
   utteranceList: document.querySelector('#utteranceList'),
-  manualForm: document.querySelector('#manualForm'),
-  manualInput: document.querySelector('#manualInput'),
   scoreValue: document.querySelector('#scoreValue'),
   scoreMeter: document.querySelector('#scoreMeter'),
   riskBadge: document.querySelector('#riskBadge'),
   riskMessage: document.querySelector('#riskMessage'),
   signalGrid: document.querySelector('#signalGrid'),
-  alertBanner: document.querySelector('#alertBanner'),
   brandImage: document.querySelector('#brandImage'),
-  transcriptionNote: document.querySelector('#transcriptionNote')
+  canarySound: document.querySelector('#canarySound')
 };
+
+// 危険に「入った瞬間」だけカナリアの鳴き声を鳴らすための前回状態
+let wasDanger = false;
 
 renderSignals({});
 
 elements.startButton.addEventListener('click', startRecording);
 elements.stopButton.addEventListener('click', stopRecording);
-elements.manualForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const text = elements.manualInput.value.trim();
-  if (!text) return;
-  elements.manualInput.value = '';
-  addUtterance(text);
-});
 
 async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    setStatus('このブラウザは録音に対応していません。手入力を使ってください。');
+    setStatus('このブラウザは録音に対応していません。');
     return;
   }
 
@@ -110,13 +102,13 @@ async function transcribeAudioBlob(blob) {
 
 async function addUtterance(text) {
   utterances.push(text);
-  while (utterances.length > MAX_UTTERANCES) utterances.shift();
   renderUtterances();
 
   try {
     const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // 会話全体を送り、一度立ったシグナルを保持(latch)してスコアを積み上げる
       body: JSON.stringify({ utterances })
     });
     const result = await response.json();
@@ -132,6 +124,8 @@ function renderUtterances() {
   elements.utteranceList.innerHTML = utterances
     .map((text) => `<li>${escapeHtml(text)}</li>`)
     .join('');
+  // 最新発話が見えるよう一番下へ自動スクロール
+  elements.utteranceList.scrollTop = elements.utteranceList.scrollHeight;
 }
 
 function updateDashboard(result) {
@@ -144,9 +138,13 @@ function updateDashboard(result) {
   elements.riskBadge.textContent = result.riskLevel?.label ?? '低リスク';
   elements.riskMessage.textContent = result.riskLevel?.message ?? '';
   elements.appShell.classList.toggle('danger-mode', isDanger);
-  elements.alertBanner.classList.toggle('hidden', !isDanger);
   elements.brandImage.src = isDanger ? elements.brandImage.dataset.dangerSrc : elements.brandImage.dataset.safeSrc;
   elements.brandImage.alt = isDanger ? 'SAFi 危険検知' : 'SAFi';
+
+  // 危険に入った瞬間にカナリアの鳴き声でアラート（連続では鳴らさない）
+  if (isDanger && !wasDanger) playCanary();
+  wasDanger = isDanger;
+
   renderSignals(result);
 }
 
@@ -178,6 +176,18 @@ function blobToBase64(blob) {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+}
+
+function playCanary() {
+  const audio = elements.canarySound;
+  if (!audio) return;
+  try {
+    audio.currentTime = 0;
+    // 録音開始のクリックでユーザー操作済みのため通常は再生可。失敗しても無視。
+    audio.play().catch(() => {});
+  } catch {
+    // noop
+  }
 }
 
 function setStatus(message) {

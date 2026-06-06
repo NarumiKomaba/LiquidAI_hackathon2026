@@ -5,7 +5,7 @@ export const SIGNALS = {
   is_authority: {
     label: '公的機関・権威の名乗り',
     weight: 18,
-    keywords: ['警察', '生活安全課', '検察', '裁判所', '金融庁', '市役所', '役所', '銀行協会', '税務署']
+    keywords: ['警察', '警視庁', '県警', '生活安全課', '検察', '裁判所', '金融庁', '市役所', '区役所', '役所', '銀行協会', '税務署', '年金事務所']
   },
   has_threat: {
     label: '脅し・不安喚起',
@@ -15,7 +15,7 @@ export const SIGNALS = {
   has_secrecy: {
     label: '口止め・秘密指示',
     weight: 22,
-    keywords: ['誰にも言わない', '秘密', '内密', '家族に言わ', '口外', '他の人に話さ', '捜査上']
+    keywords: ['誰にも言わ', '言わないで', '言わず', '内緒', 'ないしょ', '秘密', '内密', '家族に言わ', '口外', '他言', '他の人に話さ', '黙っ', '捜査上']
   },
   ask_financial: {
     label: '資産・口座情報の確認',
@@ -34,18 +34,22 @@ const EMPTY_ANALYSIS = Object.fromEntries(
 );
 
 export async function analyzeUtterance(text, options = {}) {
-  const token = process.env.HF_TOKEN || process.env.DETECTOR_API_KEY;
-  const endpoint = process.env.DETECTOR_API_URL || DEFAULT_DETECTION_API_URL;
-  const adapter = resolveInferenceAdapter({
-    provider: process.env.DETECTOR_PROVIDER || process.env.INFERENCE_PROVIDER,
-    url: endpoint
-  });
-
-  if (!options.forceLocal && (token || adapter === 'local')) {
-    try {
-      return normalizeAnalysis(await analyzeWithLfm(text, { token, endpoint, adapter }));
-    } catch (error) {
-      console.warn(`LLM detector failed; falling back to local rules: ${error.message}`);
+  // 既定は決定的なキーワード判定。is_authority の誤検知や has_secrecy の取りこぼしを
+  // 辞書で完全に制御できる。DETECTOR_ENGINE=lfm のときだけ H200 LFM を使う。
+  const useLfm = String(process.env.DETECTOR_ENGINE ?? '').toLowerCase() === 'lfm';
+  if (useLfm && !options.forceLocal) {
+    const token = process.env.HF_TOKEN || process.env.DETECTOR_API_KEY;
+    const endpoint = process.env.DETECTOR_API_URL || DEFAULT_DETECTION_API_URL;
+    const adapter = resolveInferenceAdapter({
+      provider: process.env.DETECTOR_PROVIDER || process.env.INFERENCE_PROVIDER,
+      url: endpoint
+    });
+    if (token || adapter === 'local') {
+      try {
+        return normalizeAnalysis(await analyzeWithLfm(text, { token, endpoint, adapter }));
+      } catch (error) {
+        console.warn(`LFM detector failed; falling back to keyword rules: ${error.message}`);
+      }
     }
   }
 
@@ -123,17 +127,15 @@ export function normalizeAnalysis(analysis) {
 }
 
 export function scoreConversation(items) {
-  const recentItems = items.slice(-5);
   const signalScores = Object.fromEntries(Object.keys(SIGNALS).map((key) => [key, 0]));
   const evidence = Object.fromEntries(Object.keys(SIGNALS).map((key) => [key, []]));
 
-  recentItems.forEach((item, index) => {
-    const recencyMultiplier = 0.72 + ((index + 1) / recentItems.length) * 0.28;
+  // 一度検知したシグナルはフル加点で保持し続ける(latch)。会話が進むほどスコアは上がり、下がらない。
+  items.forEach((item) => {
     const analysis = item.analysis;
-
     for (const [key, signal] of Object.entries(SIGNALS)) {
       if (analysis?.[key]?.status) {
-        signalScores[key] = Math.max(signalScores[key], Math.round(signal.weight * recencyMultiplier));
+        signalScores[key] = signal.weight;
         evidence[key].push({ text: analysis[key].text || item.text, utterance: item.text });
       }
     }
