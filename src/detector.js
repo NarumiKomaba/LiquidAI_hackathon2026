@@ -1,31 +1,25 @@
-import { DEFAULT_DETECTION_API_URL, DETECTION_MODEL } from './models.js';
-import { assertTokenIfNeeded, buildInferenceHeaders, resolveInferenceAdapter } from './inferenceAdapters.js';
+import { LOCAL_DETECTION_API_URL, DETECTION_MODEL } from './models.js';
 
 export const SIGNALS = {
   is_authority: {
     label: '公的機関・権威の名乗り',
-    weight: 18,
-    keywords: ['警察', '警視庁', '県警', '生活安全課', '検察', '裁判所', '金融庁', '市役所', '区役所', '役所', '銀行協会', '税務署', '年金事務所']
+    weight: 18
   },
   has_threat: {
     label: '脅し・不安喚起',
-    weight: 24,
-    keywords: ['疑われ', '逮捕', '犯罪', '容疑', '凍結', '差し押さえ', '危険', '被害届', '訴訟']
+    weight: 24
   },
   has_secrecy: {
     label: '口止め・秘密指示',
-    weight: 22,
-    keywords: ['誰にも言わ', '言わないで', '言わず', '内緒', 'ないしょ', '秘密', '内密', '家族に言わ', '口外', '他言', '他の人に話さ', '黙っ', '捜査上']
+    weight: 22
   },
   ask_financial: {
     label: '資産・口座情報の確認',
-    weight: 18,
-    keywords: ['残高', '口座番号', '暗証番号', 'キャッシュカード', '預金', '資産', '通帳', 'カード番号']
+    weight: 18
   },
   demand_action: {
     label: '即時行動の要求',
-    weight: 18,
-    keywords: ['今すぐ', 'ATM', '振り込', '送金', 'コンビニ', '電子マネー', 'ギフトカード', '受け取りに行', '手続きして']
+    weight: 18
   }
 };
 
@@ -33,43 +27,22 @@ const EMPTY_ANALYSIS = Object.fromEntries(
   Object.keys(SIGNALS).map((key) => [key, { status: false, text: '' }])
 );
 
-export async function analyzeUtterance(text, options = {}) {
-  // 既定は決定的なキーワード判定。is_authority の誤検知や has_secrecy の取りこぼしを
-  // 辞書で完全に制御できる。DETECTOR_ENGINE=lfm のときだけ H200 LFM を使う。
-  const useLfm = String(process.env.DETECTOR_ENGINE ?? '').toLowerCase() === 'lfm';
-  if (useLfm && !options.forceLocal) {
-    const token = process.env.HF_TOKEN || process.env.DETECTOR_API_KEY;
-    const endpoint = process.env.DETECTOR_API_URL || DEFAULT_DETECTION_API_URL;
-    const adapter = resolveInferenceAdapter({
-      provider: process.env.DETECTOR_PROVIDER || process.env.INFERENCE_PROVIDER,
-      url: endpoint
-    });
-    if (token || adapter === 'local') {
-      try {
-        return normalizeAnalysis(await analyzeWithLfm(text, { token, endpoint, adapter }));
-      } catch (error) {
-        console.warn(`LFM detector failed; falling back to keyword rules: ${error.message}`);
-      }
-    }
-  }
+export async function analyzeUtterance(text) {
+  const endpoint = process.env.DETECTOR_API_URL || LOCAL_DETECTION_API_URL;
 
-  return localAnalyze(text);
+  return normalizeAnalysis(await analyzeWithLocalLfm(text, { endpoint }));
 }
 
-async function analyzeWithLfm(text, { token, endpoint, adapter }) {
-  assertTokenIfNeeded({ adapter, token, label: 'DETECTOR' });
-
+async function analyzeWithLocalLfm(text, { endpoint }) {
   const schemaInstruction = `あなたは電話特殊詐欺のリアルタイム検知器です。入力発話を評価し、必ず次のJSONだけを返してください。該当しない項目はstatusをfalse、textを空文字にしてください。キーは is_authority, has_threat, has_secrecy, ask_financial, demand_action です。形式例: {"is_authority":{"status":true,"text":"〇〇警察の生活安全課です"},"has_threat":{"status":true,"text":"あなたも疑われています"},"has_secrecy":{"status":true,"text":"捜査は秘密なので誰にも言わないで"},"ask_financial":{"status":true,"text":"今の残高はいくらですか"},"demand_action":{"status":true,"text":"今すぐATMにいけ"}}`;
 
   const model = process.env.DETECTOR_MODEL || DETECTION_MODEL;
   const response = await fetch(endpoint, {
     method: 'POST',
-    headers: buildInferenceHeaders({
-      adapter,
-      token,
-      contentType: 'application/json',
-      model
-    }),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-SAFi-Model': model
+    },
     body: JSON.stringify({
       model,
       messages: [
@@ -89,27 +62,6 @@ async function analyzeWithLfm(text, { token, endpoint, adapter }) {
   const payload = await response.json();
   const content = payload.analysis ?? payload.choices?.[0]?.message?.content ?? payload.output_text ?? JSON.stringify(payload);
   return typeof content === 'string' ? JSON.parse(content) : content;
-}
-
-export function localAnalyze(text) {
-  const normalized = String(text ?? '').replace(/\s+/g, '');
-  const result = structuredClone(EMPTY_ANALYSIS);
-
-  for (const [key, signal] of Object.entries(SIGNALS)) {
-    const found = signal.keywords.find((keyword) => normalized.includes(keyword.replace(/\s+/g, '')));
-    if (found) {
-      result[key] = { status: true, text: extractEvidence(text, found) };
-    }
-  }
-
-  return result;
-}
-
-function extractEvidence(text, keyword) {
-  const source = String(text ?? '');
-  const index = source.indexOf(keyword);
-  if (index < 0) return source.slice(0, 80);
-  return source.slice(Math.max(0, index - 18), Math.min(source.length, index + keyword.length + 36));
 }
 
 export function normalizeAnalysis(analysis) {
