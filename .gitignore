@@ -1,11 +1,26 @@
-models/
+node_modules/
 .env
+.env.local
+.env.*.local
+
+# サービスアカウント鍵は絶対にコミットしない。
+# GCP がダウンロードさせる既定のファイル名は "<project-id>-<12桁hex>.json" で、
+# 個別パターンでは拾いきれないため JSON は全部無視し、必要なものだけ許可する。
+*.json
+!package.json
+!package-lock.json
+*.pem
+*.p12
+*.pfx
 *.wav
 *.webm
 *.mp3
 *.mp4
-__pycache__/
-.venv/
+
+# 動作確認で生成される一時ファイル（public/assets/ の画像は追跡対象のまま）
+.playwright-mcp/
+/*.png
+/public/__demo/
 
 # カナリア警告音だけは追跡対象にする（他の音声ファイルは除外のまま）
 !public/assets/canary.mp3

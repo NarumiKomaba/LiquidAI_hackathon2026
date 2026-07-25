@@ -1,7 +1,7 @@
 {
   "name": "safi",
   "version": "1.0.0",
-  "description": "SAFi - real-time AI-assisted special fraud detection web app for phone calls",
+  "description": "SAFi - real-time phone-fraud detection web app powered by Gemini on Vertex AI",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -13,11 +13,17 @@
     "fraud-detection",
     "nodejs",
     "realtime",
-    "ai",
+    "gemini",
+    "vertex-ai",
     "safi"
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {},
-  "devDependencies": {}
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "@google/genai": "^2.13.0",
+    "zod": "^4.4.3"
+  }
 }
