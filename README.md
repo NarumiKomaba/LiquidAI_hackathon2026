@@ -1,5 +1,7 @@
 # SAFi
 
+https://safi-300937800298.asia-northeast1.run.app
+
 SAFi は、電話中の発話から特殊詐欺の兆候をリアルタイムに検知する Web アプリケーションです。
 
 ブラウザで短い音声チャンクを録音し、Vertex AI 上の Gemini に送ります。Gemini は1回の呼び出しで「日本語の文字起こし」と「詐欺シグナルの判定」を同時に行い、構造化された JSON を返します。Node.js 側は会話全体のシグナルからスコアを計算し、危険度表示を更新します。
@@ -140,12 +142,49 @@ http://localhost:3000
 | `GOOGLE_CLOUD_PROJECT` | Google Cloud プロジェクト ID | ✅ |
 | `GOOGLE_CLOUD_LOCATION` | Vertex AI のリージョン（既定: `asia-northeast1`） | |
 | `GEMINI_MODEL` | 使用するモデル（既定: `gemini-2.5-flash`） | |
-| `PORT` | 待ち受けポート（既定: `3000`） | |
-| `HOST` | 待ち受けアドレス（既定: `127.0.0.1`） | |
+| `PORT` | 待ち受けポート（既定: `3000`。Cloud Run では自動設定） | |
+| `HOST` | 待ち受けアドレス（既定: ローカルは `127.0.0.1`、Cloud Run では `0.0.0.0`） | |
+| `RATE_LIMIT_PER_IP` | IP単位のレート制限（既定: `20` req/分） | |
+| `RATE_LIMIT_GLOBAL` | 全体のレート制限（既定: `60` req/分） | |
+| `DAILY_REQUEST_LIMIT` | 1日あたりの総リクエスト上限（既定: `2000`） | |
+
+Cloud Run 上ではサービスアカウントの認証情報がメタデータサーバーから供給されるため、`GOOGLE_APPLICATION_CREDENTIALS` は不要です（`K_SERVICE` の有無で自動判定します）。
 
 必須の変数が欠けている場合、起動時に不足している変数名をまとめて表示して停止します。
 
 既定ではループバックのみで待ち受けます。`/api/analyze` には認証が無く、1リクエストごとに Vertex AI の課金が発生するため、同一ネットワークの他端末から叩かれないようにするためです。別端末から見せたい場合は `HOST=0.0.0.0` を明示してください（その場合はレート制限だけが歯止めになります）。
+
+## デプロイ（Cloud Run）
+
+```bash
+gcloud run deploy safi \
+  --source . \
+  --project geosycle \
+  --region asia-northeast1 \
+  --allow-unauthenticated \
+  --max-instances 1 \
+  --min-instances 0 \
+  --concurrency 10 \
+  --cpu 1 --memory 512Mi --timeout 60 \
+  --set-env-vars "GOOGLE_CLOUD_PROJECT=geosycle,GOOGLE_CLOUD_LOCATION=asia-northeast1,GEMINI_MODEL=gemini-2.5-flash,RATE_LIMIT_PER_IP=20,RATE_LIMIT_GLOBAL=60,DAILY_REQUEST_LIMIT=2000"
+```
+
+### `--max-instances 1` は必須です
+
+会話履歴とレート制限をプロセスメモリに持っているため、複数インスタンスに分散すると次の2つが壊れます。
+
+- 同じ通話のチャンクが別インスタンスに振り分けられ、latch スコアが積み上がらない
+- レート制限がインスタンス数の倍だけ緩む
+
+複数インスタンスで動かすには、履歴を外部ストア（Firestore / Redis 等）に移す必要があります。
+
+### コストについて
+
+費用の主役は Cloud Run ではなく Vertex AI の呼び出しです。Cloud Run 自体はデモ規模なら無料枠に収まり、`--min-instances 0` でアイドル時の課金も発生しません。
+
+一方 `/api/analyze` には認証が無いため、URL を知っていれば誰でも Gemini を呼べます。歯止めは上記の3つのレート制限だけです。`DAILY_REQUEST_LIMIT=2000` は 4.5秒チャンク換算で通話約150分ぶんに相当します。公開範囲や利用状況に応じて調整してください。
+
+より確実に総額を抑えるなら、GCP 側で予算アラート（できれば Pub/Sub 経由で課金を停止する Cloud Function）を併用してください。レート制限はスループットを抑えるだけで、総額そのものは保証しません。
 
 ## 使い方
 
@@ -237,6 +276,7 @@ http://localhost:3000
 │   └── ratelimit.js      # IP単位・全体のレート制限
 ├── test/
 ├── server.js
+├── Dockerfile            # Cloud Run 用
 ├── .env.example
 └── package.json
 ```
@@ -278,9 +318,10 @@ http://localhost:3000
 
 このアプリはハッカソン向けのデモです。本番運用するには最低限、以下が必要です。
 
-- `/api/analyze` の認証（現状は同一端末からのアクセスであれば誰でも呼べます）
+- `/api/analyze` の認証（現状、Cloud Run の URL を知っていれば誰でも呼べます）
 - GCP 側の予算上限とアラート（レート制限はスループットを抑えるだけで、総額は抑えません）
 - セッションIDをリクエストボディではなく `httpOnly` Cookie から導出する方式への変更
+- 会話履歴の外部ストア化（現状はインメモリのため `--max-instances 1` から増やせません）
 
 ## ライセンス
 

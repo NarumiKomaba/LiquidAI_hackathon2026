@@ -29,7 +29,11 @@ if (existsSync(envFile)) {
 const config = loadConfig(process.env);
 const gemini = createGeminiClient(config);
 const conversations = createConversationStore();
-const allowRequest = createRateLimiter();
+const allowRequest = createRateLimiter({
+  maxPerIp: config.RATE_LIMIT_PER_IP,
+  maxGlobal: config.RATE_LIMIT_GLOBAL,
+  dailyLimit: config.DAILY_REQUEST_LIMIT
+});
 
 // 1リクエストのハンドリングが漏らした例外でプロセスごと落ちないようにする最終防衛線
 process.on('unhandledRejection', (error) => console.error('unhandledRejection:', error));
@@ -144,10 +148,13 @@ async function handleReset(req, res) {
  * プリフライトが失敗し、悪意あるページからの CSRF 的な呼び出しが通らなくなる。
  */
 function enforceRequestGuards(req, res) {
-  const ip = req.socket.remoteAddress ?? 'unknown';
-  if (!allowRequest(ip)) {
-    console.warn('rate limit exceeded:', ip);
-    sendJson(res, 429, { error: 'too_many_requests' });
+  // Cloud Run ではクライアントIPが X-Forwarded-For の先頭に入る。
+  // socket のアドレスはロードバランサのものなので、それだけ見ると全員が同一IP扱いになる。
+  const ip = clientIpOf(req);
+  const verdict = allowRequest(ip);
+  if (!verdict.allowed) {
+    console.warn(`rate limit exceeded (${verdict.reason}):`, ip);
+    sendJson(res, 429, { error: 'too_many_requests', reason: verdict.reason });
     return false;
   }
 
@@ -164,6 +171,18 @@ function enforceRequestGuards(req, res) {
   }
 
   return true;
+}
+
+/**
+ * レート制限のキーに使うクライアントIP。
+ *
+ * Cloud Run の前段には常にロードバランサが入るため、X-Forwarded-For の先頭を採る。
+ * ローカル実行時はこのヘッダが無いのでソケットのアドレスにフォールバックする。
+ * ヘッダは詐称できるが、詐称されて困るのは IP 単位の制限だけで、全体・日次の上限は効く。
+ */
+function clientIpOf(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim();
+  return forwarded || req.socket.remoteAddress || 'unknown';
 }
 
 /** 同一オリジンからの fetch は Origin を送らないことがあるので、無い場合は許可する。 */
