@@ -147,6 +147,8 @@ http://localhost:3000
 | `RATE_LIMIT_PER_IP` | IP単位のレート制限（既定: `20` req/分） | |
 | `RATE_LIMIT_GLOBAL` | 全体のレート制限（既定: `60` req/分） | |
 | `DAILY_REQUEST_LIMIT` | 1日あたりの総リクエスト上限（既定: `2000`） | |
+| `HISTORY_RETENTION_DAYS` | 通話履歴の保持日数（既定: `90`） | |
+| `HISTORY_API_KEY` | 設定すると `GET /api/history` に `X-SAFi-Api-Key` の一致を要求する | |
 
 Cloud Run 上ではサービスアカウントの認証情報がメタデータサーバーから供給されるため、`GOOGLE_APPLICATION_CREDENTIALS` は不要です（`K_SERVICE` の有無で自動判定します）。
 
@@ -185,6 +187,58 @@ gcloud run deploy safi \
 一方 `/api/analyze` には認証が無いため、URL を知っていれば誰でも Gemini を呼べます。歯止めは上記の3つのレート制限だけです。`DAILY_REQUEST_LIMIT=2000` は 4.5秒チャンク換算で通話約150分ぶんに相当します。公開範囲や利用状況に応じて調整してください。
 
 より確実に総額を抑えるなら、GCP 側で予算アラート（できれば Pub/Sub 経由で課金を停止する Cloud Function）を併用してください。レート制限はスループットを抑えるだけで、総額そのものは保証しません。
+
+## 通話履歴
+
+遷移元のページから利用者情報を渡すと、通話ごとの記録が Firestore に残ります。
+
+```txt
+https://safi-300937800298.asia-northeast1.run.app/?userId=u_12345&displayName=山田太郎
+```
+
+読み取った利用者情報は `history.replaceState` で URL から消します。ブックマークや画面共有で利用者IDが意図せず出回るのを防ぐためです。値はメモリに保持して通話中ずっと使います。
+
+### 何を残すか
+
+履歴の目的は「あとから見て、**どの通話が実際に詐欺だったか**を特定できること」です。スコアだけでは通話の区別がつかず、かといって全文を蓄積すると電話をかけてきた相手を含む第三者の発言をそのまま溜め込むことになります。そこで**通話終了時に Gemini で要約を1回生成**し、要約と根拠の抜粋だけを保存します。
+
+| フィールド | 内容 |
+| --- | --- |
+| `summary` | 通話全体の要約（2〜3文） |
+| `callerClaim` | 相手が名乗った所属・立場 |
+| `requestedAction` | 相手が求めてきた具体的な行動 |
+| `signals` | 成立したシグナルと、その根拠となった発言の抜粋 |
+| `score` / `riskLevel` | 最終スコアと危険度 |
+| `startedAt` / `endedAt` / `utteranceCount` | 通話の時刻と発話数 |
+
+**会話の全文は保存しません。**
+
+### 保持期間
+
+`HISTORY_RETENTION_DAYS`（既定90日）を過ぎた記録は、Firestore の TTL ポリシーが `expiresAt` を見て自動削除します。TTL は設定済みです。日数を変える場合、TTL ポリシー自体はフィールドを見るだけなので再設定は不要です。
+
+### 必要な Firestore の設定
+
+デプロイ済みプロジェクト（`geosycle`）では設定済みです。別プロジェクトで動かす場合は次の2つが要ります。
+
+```bash
+# 履歴を新しい順に引くための複合インデックス
+gcloud firestore indexes composite create \
+  --collection-group=callHistories \
+  --field-config=field-path=userId,order=ascending \
+  --field-config=field-path=endedAt,order=descending \
+  --project=<PROJECT>
+
+# 保持期間を過ぎた記録の自動削除
+gcloud firestore fields ttls update expiresAt \
+  --collection-group=callHistories --enable-ttl --project=<PROJECT>
+```
+
+### 履歴が残らないケース
+
+- `userId` が渡っていない通話（匿名の通話記録は残しません）
+- 発話が1件も無かった通話
+- 停止も押さずタブも閉じずに放置された通話。`pagehide` で確定要求を投げていますが、それも届かなかった場合はセッションTTL（1時間）で破棄され、履歴には残りません
 
 ## 使い方
 
@@ -231,20 +285,53 @@ gcloud run deploy safi \
 
 `sessionId` は UUID 形式のみ受け付けます。`mimeType` は音声系のみで、それ以外は 400 で拒否します（この API を汎用マルチモーダルプロキシとして悪用されないため）。
 
+`userId` / `displayName` は任意です。渡すと通話終了時に履歴が残ります。渡さない場合、検知機能はそのまま動き、履歴だけが残りません。
+
+### `POST /api/reset`
+
+通話の終了です。利用者IDが分かっていれば、要約を生成して履歴を1件保存してからセッションを破棄します。
+
+```json
+{ "sessionId": "7b1f...", "userId": "u_12345" }
+```
+
+```json
+{ "ok": true, "recorded": true, "historyId": "3jFdw0HXwQhhqEtXtTZV" }
+```
+
+### `GET /api/history?userId=xxx&limit=50`
+
+利用者の通話履歴を新しい順に返します。`userId` は必須です（全件を返す口はありません）。
+
+```json
+{
+  "userId": "u_12345",
+  "count": 1,
+  "calls": [
+    {
+      "id": "3jFdw0HXwQhhqEtXtTZV",
+      "startedAt": "2026-07-25T10:41:46.736Z",
+      "endedAt": "2026-07-25T10:42:03.428Z",
+      "score": 100,
+      "riskLevel": "danger",
+      "utteranceCount": 5,
+      "summary": "中央警察署生活安全課の田中と名乗る人物から電話があり、口座が特殊詐欺に利用された疑いがあるため逮捕される可能性があると告げられた。解決のためとして、預金残高と暗証番号を教えること、ATMで指定の口座に送金するよう求められた。",
+      "callerClaim": "中央警察署生活安全課の田中",
+      "requestedAction": "預金残高とキャッシュカードの暗証番号を教えること、およびATMで指定の口座に送金すること",
+      "signals": [
+        { "key": "is_authority", "label": "公的機関・権威の名乗り", "evidence": "中央警察署生活安全課の田中と申します" }
+      ]
+    }
+  ]
+}
+```
+
 ### `GET /api/signals`
 
 画面のカード見出しに使うシグナル定義を返します。定義元は `src/signals.js` の1箇所だけです。
 
 ```json
 { "signals": [{ "key": "is_authority", "label": "権威の名乗り", "weight": 18 }] }
-```
-
-### `POST /api/reset`
-
-通話終了時にサーバー側のセッション履歴を破棄します。
-
-```json
-{ "sessionId": "7b1f..." }
 ```
 
 ### `GET /api/health`
@@ -270,7 +357,9 @@ gcloud run deploy safi \
 │   ├── analysis.js       # モデル出力の正規化
 │   ├── keywords.js       # 判定抑制に備えたキーワードフロア
 │   ├── scoring.js        # latch スコアリングと危険度判定
-│   ├── conversation.js   # 通話セッションごとの会話履歴ストア
+│   ├── conversation.js   # 通話セッションごとの会話履歴ストア（インメモリ）
+│   ├── summary.js        # 通話終了時の要約生成
+│   ├── history.js        # 通話履歴の永続化（Firestore）
 │   ├── requestSchemas.js # リクエストボディの検証（zod）
 │   ├── staticFiles.js    # 静的配信のパス解決（トラバーサル防御）
 │   └── ratelimit.js      # IP単位・全体のレート制限
@@ -309,7 +398,9 @@ gcloud run deploy safi \
 
 ### データとモデル
 
-- 会話履歴はプロセスメモリのみに保持し、TTL（1時間）とセッション数・発話数の上限で自動的に破棄されます。通話終了時にはクライアントから明示的に破棄を要求します
+- 通話中の会話履歴はプロセスメモリのみに保持し、TTL（1時間）とセッション数・発話数の上限で自動的に破棄されます
+- Firestore に残すのは要約と根拠の抜粋だけで、会話の全文は保存しません。保持期間を過ぎた記録は TTL ポリシーが自動削除します
+- 利用者情報はクエリパラメータで受け取り、読み取り後すぐ URL から除去します
 - スコアはサーバーだけが計算します。モデルは真偽値と根拠テキストしか返さないため、出力に点数を混ぜ込むことはできません
 - 音声を発しているのが詐欺犯本人である以上、モデルへの入力は攻撃者の制御下にあります。判定を抑え込む発言への対策として、システム指示での明示的な拒否と、文字起こしに対する決定的なキーワードフロアの2段構えにしています
 - エラーレスポンスに内部情報を含めません（詳細はサーバーログにのみ出力）
@@ -318,6 +409,7 @@ gcloud run deploy safi \
 
 このアプリはハッカソン向けのデモです。本番運用するには最低限、以下が必要です。
 
+- **`userId` は本人確認になっていません。** クエリパラメータで平文で受け取っているため、他人のIDを名乗って履歴を汚したり、`GET /api/history?userId=...` で他人の要約を読んだりできます。実運用では遷移元に署名付きトークン（JWT等）を発行してもらい、SAFi 側で検証する必要があります。当面の緩和策として `HISTORY_API_KEY` を設定すると、履歴の読み出しにキーを要求できます
 - `/api/analyze` の認証（現状、Cloud Run の URL を知っていれば誰でも呼べます）
 - GCP 側の予算上限とアラート（レート制限はスループットを抑えるだけで、総額は抑えません）
 - セッションIDをリクエストボディではなく `httpOnly` Cookie から導出する方式への変更

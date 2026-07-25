@@ -20,8 +20,25 @@ const MAX_AUDIO_BASE64_CHARS = 10_000_000;
  */
 const sessionIdSchema = z.uuid();
 
+/**
+ * 遷移元から渡ってくる利用者ID。
+ *
+ * クエリパラメータで平文のまま受け取る前提なので、この値は「本人であることの証明」ではなく
+ * 単なる履歴の振り分けキーとして扱う。名乗りを検証しないぶん、混入すると困る文字は
+ * ここで落としておく（Firestore のクエリ値として使うため制御文字などを通さない）。
+ */
+const userIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9._@-]+$/, 'userId may only contain letters, digits and ._@-');
+
+const displayNameSchema = z.string().max(100);
+
 export const analyzeSchema = z.object({
   sessionId: sessionIdSchema,
+  userId: userIdSchema.optional(),
+  displayName: displayNameSchema.optional(),
   audioBase64: z
     .string()
     .min(1)
@@ -37,7 +54,15 @@ export const analyzeSchema = z.object({
 });
 
 export const resetSchema = z.object({
-  sessionId: sessionIdSchema
+  sessionId: sessionIdSchema,
+  userId: userIdSchema.optional(),
+  displayName: displayNameSchema.optional()
+});
+
+/** GET /api/history のクエリ。userId は必須（全件を返す口は用意しない）。 */
+export const historyQuerySchema = z.object({
+  userId: userIdSchema,
+  limit: z.coerce.number().int().min(1).max(200).default(50)
 });
 
 /** zod のエラーを利用者向けの1行メッセージにする。値そのものは載せない。 */

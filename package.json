@@ -23,7 +23,11 @@
     "node": ">=20.12"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^8.7.0",
     "@google/genai": "^2.13.0",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8"
   }
 }

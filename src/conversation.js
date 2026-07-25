@@ -78,8 +78,9 @@ export function createConversationStore(options = {}) {
      *
      * @param {string} sessionId
      * @param {{ text: string, analysis: object }} item
+     * @param {{ userId?: string, displayName?: string }} [caller] 履歴保存に使う利用者情報
      */
-    append(sessionId, item) {
+    append(sessionId, item, caller = {}) {
       dropExpired();
 
       const previous = sessions.get(sessionId);
@@ -97,7 +98,15 @@ export function createConversationStore(options = {}) {
 
       // 一度削除してから入れ直し、アクセスの新しいものが Map の末尾に来るようにする
       sessions.delete(sessionId);
-      const session = { updatedAt: now(), carried, items };
+      const session = {
+        updatedAt: now(),
+        // 通話の開始時刻と利用者は最初の発話のものを保つ。以降の指定では上書きしない。
+        startedAt: previous?.startedAt ?? now(),
+        userId: previous?.userId ?? caller.userId,
+        displayName: previous?.displayName ?? caller.displayName,
+        carried,
+        items
+      };
       sessions.set(sessionId, session);
       enforceSessionLimit();
 
@@ -108,6 +117,28 @@ export function createConversationStore(options = {}) {
     get(sessionId) {
       dropExpired();
       return toScorableItems(sessions.get(sessionId));
+    },
+
+    /**
+     * 通話を終了し、履歴保存に必要な情報を取り出してセッションを破棄する。
+     * 発話が1件も無いセッションは null を返す（保存する価値が無いため）。
+     *
+     * @param {string} sessionId
+     */
+    finalize(sessionId) {
+      const session = sessions.get(sessionId);
+      sessions.delete(sessionId);
+
+      if (!session || session.items.length === 0) return null;
+
+      return {
+        startedAt: session.startedAt,
+        userId: session.userId,
+        displayName: session.displayName,
+        items: toScorableItems(session),
+        // 要約は実際に話された内容から作る。あふれた分を示す擬似発話は含めない。
+        utterances: session.items.map((item) => item.text)
+      };
     },
 
     /** @param {string} sessionId */

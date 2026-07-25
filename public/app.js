@@ -12,6 +12,10 @@ let mediaRecorder;
 let mediaStream;
 let recordingActive = false;
 let segmentTimer;
+// 遷移元から ?userId=... で渡ってくる利用者情報。通話履歴の振り分けに使う。
+// 無ければ履歴は残さず、検知機能だけが動く。
+const caller = readCallerFromUrl();
+
 // 通話ごとの識別子。サーバー側はこれをキーに会話履歴を保持して latch スコアを積む。
 // 生成は startRecording まで遅らせる（非セキュアコンテキストでは crypto.randomUUID が無く、
 // モジュール読み込み時に落とすとボタンのハンドラすら付かなくなるため）。
@@ -104,6 +108,37 @@ function resetDashboard() {
   elements.riskMessage.textContent = IDLE_RISK_MESSAGE;
 }
 
+/**
+ * 遷移元が付けたクエリパラメータから利用者情報を取り出す。
+ *
+ * 読み取ったあとは history.replaceState で URL から消す。ブックマークや共有で
+ * 利用者IDが意図せず出回るのを防ぐためで、値自体はメモリに保持して使い続ける。
+ */
+function readCallerFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const userId = params.get('userId') ?? '';
+  const displayName = params.get('displayName') ?? '';
+
+  if (userId && (params.has('userId') || params.has('displayName'))) {
+    params.delete('userId');
+    params.delete('displayName');
+    const query = params.toString();
+    history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}`);
+  }
+
+  return { userId, displayName };
+}
+
+/** 利用者情報が渡っていればリクエストに載せる。無ければキー自体を送らない。 */
+function withCaller(payload) {
+  if (!caller.userId) return payload;
+  return {
+    ...payload,
+    userId: caller.userId,
+    ...(caller.displayName ? { displayName: caller.displayName } : {})
+  };
+}
+
 function createSessionId() {
   if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
   // 非セキュアコンテキスト向けのフォールバック。衝突しなければ十分で、秘匿性は要らない。
@@ -111,8 +146,9 @@ function createSessionId() {
 }
 
 /**
- * 停止が予約されていて、かつ解析待ちが無くなったらサーバーの履歴を破棄する。
- * 失敗してもサーバー側の TTL で消えるので握りつぶす。
+ * 停止が予約されていて、かつ解析待ちが無くなったら通話を確定させる。
+ * サーバー側はここで要約を作って履歴に残し、セッションを破棄する。
+ * 失敗してもサーバー側の TTL でセッションは消えるので握りつぶす。
  */
 function releaseIfIdle() {
   if (!sessionToRelease || pendingAnalyses > 0) return;
@@ -122,9 +158,21 @@ function releaseIfIdle() {
   fetch('/api/reset', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId: id })
+    body: JSON.stringify(withCaller({ sessionId: id }))
   }).catch(() => {});
 }
+
+// 停止を押さずにタブを閉じられると通話が確定せず、履歴が残らない。
+// pagehide で確定要求だけ投げておく（keepalive で離脱後も送信される）。
+addEventListener('pagehide', () => {
+  if (!recordingActive || !sessionId) return;
+  fetch('/api/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(withCaller({ sessionId })),
+    keepalive: true
+  }).catch(() => {});
+});
 
 function startRecordingSegment() {
   const chunks = [];
@@ -176,7 +224,9 @@ async function sendForAnalysis(blob) {
     const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: requestSession, audioBase64, mimeType: blob.type || 'audio/webm' }),
+      body: JSON.stringify(
+        withCaller({ sessionId: requestSession, audioBase64, mimeType: blob.type || 'audio/webm' })
+      ),
       signal: AbortSignal.timeout(ANALYSIS_TIMEOUT_MS)
     });
     const result = await response.json();

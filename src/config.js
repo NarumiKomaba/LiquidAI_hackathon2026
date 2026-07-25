@@ -26,6 +26,12 @@ const configSchema = z
     // 4.5秒チャンクなので 2000 ≒ 通話150分ぶん。
     DAILY_REQUEST_LIMIT: z.coerce.number().int().min(1).default(2000),
 
+    // 通話履歴の保持日数。Firestore の TTL ポリシーと揃えること。
+    HISTORY_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
+    // 設定すると GET /api/history に X-SAFi-Api-Key の一致を要求する。
+    // 未設定なら誰でも読めるので、要約を外に出したくない運用では必ず設定する。
+    HISTORY_API_KEY: z.string().min(16).optional(),
+
     // Cloud Run が自動で入れる環境変数。存在すればマネージド環境だと判断する。
     K_SERVICE: z.string().optional()
   })

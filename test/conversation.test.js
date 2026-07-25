@@ -91,6 +91,54 @@ test('an active session is not evicted by newer ones', () => {
   assert.deepEqual(store.get('call-b'), []);
 });
 
+test('finalize returns the call and clears the session', () => {
+  const store = createConversationStore({ now: () => 1000 });
+
+  store.append('call-a', utterance('もしもし'), { userId: 'u_1', displayName: '山田' });
+  store.append('call-a', utterance('警察です'));
+  const finalized = store.finalize('call-a');
+
+  assert.equal(finalized.userId, 'u_1');
+  assert.equal(finalized.displayName, '山田');
+  assert.equal(finalized.startedAt, 1000);
+  assert.deepEqual(finalized.utterances, ['もしもし', '警察です']);
+  assert.deepEqual(store.get('call-a'), [], 'finalize したセッションは消える');
+});
+
+// 利用者情報は最初の発話のものを保つ。途中のリクエストで差し替えられると、
+// 通話の途中から別人の履歴に化けてしまう。
+test('finalize keeps the caller from the first utterance', () => {
+  const store = createConversationStore();
+
+  store.append('call-a', utterance('1'), { userId: 'u_1' });
+  store.append('call-a', utterance('2'), { userId: 'u_attacker' });
+
+  assert.equal(store.finalize('call-a').userId, 'u_1');
+});
+
+test('finalize returns null for a call with nothing said', () => {
+  const store = createConversationStore();
+
+  assert.equal(store.finalize('never-started'), null);
+});
+
+test('finalize excludes the carried placeholder from the text used for summarising', () => {
+  const store = createConversationStore({ maxUtterances: 2 });
+
+  store.append('call-a', utterance('〇〇警察です', { is_authority: { status: true, text: '〇〇警察です' } }));
+  store.append('call-a', utterance('世間話1'));
+  store.append('call-a', utterance('世間話2'));
+
+  const finalized = store.finalize('call-a');
+
+  assert.deepEqual(finalized.utterances, ['世間話1', '世間話2'], '要約には擬似発話を混ぜない');
+  assert.equal(
+    finalized.items.some((item) => item.analysis.is_authority?.status),
+    true,
+    'スコアリング用にはシグナルが残る'
+  );
+});
+
 test('sessions expire after the TTL', () => {
   let clock = 0;
   const store = createConversationStore({ ttlMs: 1000, now: () => clock });

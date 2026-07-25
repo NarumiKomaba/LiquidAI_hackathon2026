@@ -3,13 +3,21 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { Firestore } from '@google-cloud/firestore';
 import { loadConfig } from './src/config.js';
 import { createConversationStore } from './src/conversation.js';
+import { createHistoryStore } from './src/history.js';
 import { createRateLimiter } from './src/ratelimit.js';
 import { scoreConversation } from './src/scoring.js';
 import { SIGNAL_DESCRIPTORS } from './src/signals.js';
 import { analyzeAudio, createGeminiClient } from './src/gemini.js';
-import { analyzeSchema, describeValidationError, resetSchema } from './src/requestSchemas.js';
+import { buildSignalDigest, summarizeCall } from './src/summary.js';
+import {
+  analyzeSchema,
+  describeValidationError,
+  historyQuerySchema,
+  resetSchema
+} from './src/requestSchemas.js';
 import { contentTypeFor, resolveStaticPath } from './src/staticFiles.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +37,10 @@ if (existsSync(envFile)) {
 const config = loadConfig(process.env);
 const gemini = createGeminiClient(config);
 const conversations = createConversationStore();
+const histories = createHistoryStore({
+  firestore: new Firestore({ projectId: config.GOOGLE_CLOUD_PROJECT }),
+  retentionDays: config.HISTORY_RETENTION_DAYS
+});
 const allowRequest = createRateLimiter({
   maxPerIp: config.RATE_LIMIT_PER_IP,
   maxGlobal: config.RATE_LIMIT_GLOBAL,
@@ -60,6 +72,10 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/signals') {
       return sendJson(res, 200, { signals: SIGNAL_DESCRIPTORS });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/history') {
+      return await handleHistory(req, url, res);
     }
 
     // await を付けないと、ハンドラ内の非同期例外が下の catch に入らずプロセスを落とす
@@ -113,7 +129,11 @@ async function handleAnalyze(req, res) {
     const silent = transcript === '';
     const items = silent
       ? conversations.get(input.sessionId)
-      : conversations.append(input.sessionId, { text: transcript, analysis });
+      : conversations.append(
+          input.sessionId,
+          { text: transcript, analysis },
+          { userId: input.userId, displayName: input.displayName }
+        );
 
     sendJson(res, 200, {
       app: 'SAFi',
@@ -127,16 +147,75 @@ async function handleAnalyze(req, res) {
   }
 }
 
-/** 通話終了時にセッションの履歴を破棄する。 */
+/**
+ * 通話終了。利用者IDが分かっていれば履歴を1件残してから、セッションを破棄する。
+ *
+ * 要約の生成はここでしか行わない。通話全体が揃って初めて「どんな用件の電話だったか」を
+ * まとめられるためで、チャンクごとに作っても意味をなさない。
+ */
 async function handleReset(req, res) {
   if (!enforceRequestGuards(req, res)) return;
 
+  let input;
   try {
-    const input = resetSchema.parse(await readJsonBody(req));
-    conversations.reset(input.sessionId);
-    sendJson(res, 200, { ok: true });
+    input = resetSchema.parse(await readJsonBody(req));
   } catch (error) {
-    sendRequestError(res, error);
+    return sendRequestError(res, error);
+  }
+
+  const finalized = conversations.finalize(input.sessionId);
+  const userId = finalized?.userId ?? input.userId;
+
+  // 利用者が分からない通話は保存先が無いので記録しない（匿名の通話記録は残さない）
+  if (!finalized || !userId) {
+    return sendJson(res, 200, { ok: true, recorded: false });
+  }
+
+  try {
+    const scored = scoreConversation(finalized.items);
+    const summary = await summarizeCall(gemini, {
+      model: config.GEMINI_MODEL,
+      utterances: finalized.utterances
+    });
+
+    const record = await histories.record({
+      userId,
+      displayName: finalized.displayName ?? input.displayName,
+      sessionId: input.sessionId,
+      startedAt: new Date(finalized.startedAt),
+      score: scored.score,
+      riskLevel: scored.riskLevel.key,
+      utteranceCount: finalized.utterances.length,
+      signals: buildSignalDigest(scored),
+      summary
+    });
+
+    sendJson(res, 200, { ok: true, recorded: true, historyId: record.id });
+  } catch (error) {
+    // 保存に失敗しても通話自体は終わっている。利用者を止める理由が無いので 200 で返す。
+    console.error('history record failed:', error);
+    sendJson(res, 200, { ok: true, recorded: false });
+  }
+}
+
+/** 利用者ごとの通話履歴を新しい順に返す。 */
+async function handleHistory(req, url, res) {
+  if (!enforceRateLimit(req, res)) return;
+  if (!enforceHistoryAccess(req, res)) return;
+
+  let query;
+  try {
+    query = historyQuerySchema.parse(Object.fromEntries(url.searchParams));
+  } catch (error) {
+    return sendRequestError(res, error);
+  }
+
+  try {
+    const calls = await histories.listByUser(query.userId, { limit: query.limit });
+    sendJson(res, 200, { userId: query.userId, count: calls.length, calls });
+  } catch (error) {
+    console.error('history lookup failed:', error);
+    sendJson(res, 502, { error: 'history_unavailable' });
   }
 }
 
@@ -148,15 +227,7 @@ async function handleReset(req, res) {
  * プリフライトが失敗し、悪意あるページからの CSRF 的な呼び出しが通らなくなる。
  */
 function enforceRequestGuards(req, res) {
-  // Cloud Run ではクライアントIPが X-Forwarded-For の先頭に入る。
-  // socket のアドレスはロードバランサのものなので、それだけ見ると全員が同一IP扱いになる。
-  const ip = clientIpOf(req);
-  const verdict = allowRequest(ip);
-  if (!verdict.allowed) {
-    console.warn(`rate limit exceeded (${verdict.reason}):`, ip);
-    sendJson(res, 429, { error: 'too_many_requests', reason: verdict.reason });
-    return false;
-  }
+  if (!enforceRateLimit(req, res)) return false;
 
   const contentType = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
   if (contentType !== 'application/json') {
@@ -167,6 +238,40 @@ function enforceRequestGuards(req, res) {
   if (!isSameOrigin(req)) {
     console.warn('cross-origin request rejected:', req.headers.origin);
     sendJson(res, 403, { error: 'forbidden' });
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * レート制限。GET も含めた全 API に効かせる。
+ *
+ * Cloud Run ではクライアントIPが X-Forwarded-For の先頭に入る。
+ * socket のアドレスはロードバランサのものなので、それだけ見ると全員が同一IP扱いになる。
+ */
+function enforceRateLimit(req, res) {
+  const ip = clientIpOf(req);
+  const verdict = allowRequest(ip);
+  if (verdict.allowed) return true;
+
+  console.warn(`rate limit exceeded (${verdict.reason}):`, ip);
+  sendJson(res, 429, { error: 'too_many_requests', reason: verdict.reason });
+  return false;
+}
+
+/**
+ * 履歴参照の認可。
+ *
+ * HISTORY_API_KEY を設定した場合だけ、X-SAFi-Api-Key の一致を要求する。
+ * 未設定なら誰でも読めるので、要約を外に出したくない運用では必ず設定すること。
+ */
+function enforceHistoryAccess(req, res) {
+  if (!config.HISTORY_API_KEY) return true;
+
+  if (req.headers['x-safi-api-key'] !== config.HISTORY_API_KEY) {
+    console.warn('history access rejected:', clientIpOf(req));
+    sendJson(res, 401, { error: 'unauthorized' });
     return false;
   }
 
