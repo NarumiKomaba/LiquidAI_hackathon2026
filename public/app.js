@@ -66,7 +66,7 @@ async function loadSignalDescriptors() {
 
 async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    setStatus('このブラウザは録音に対応していません。');
+    setStatus('このブラウザは見まもりに対応していません。');
     return;
   }
 
@@ -80,9 +80,9 @@ async function startRecording() {
     startRecordingSegment();
     elements.startButton.disabled = true;
     elements.stopButton.disabled = false;
-    setStatus('録音中');
+    setStatus('見まもり中');
   } catch (error) {
-    setStatus(`録音を開始できません: ${error.message}`);
+    setStatus(`見まもりを開始できません: ${error.message}`);
   }
 }
 
@@ -240,7 +240,7 @@ async function sendForAnalysis(blob) {
       renderUtterances();
     }
     updateDashboard(result);
-    setStatus(recordingActive ? '録音中' : '待機中');
+    setStatus(recordingActive ? '見まもり中' : '待機中');
   } catch (error) {
     if (requestSession !== sessionId) return;
     setStatus('解析に失敗しました');
