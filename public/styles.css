@@ -27,8 +27,13 @@ body {
 button, input { font: inherit; }
 h1, h2, p { margin-top: 0; }
 
+/* 画面1枚に収める。可変にするのは発話ログだけで、topbar と検知シグナルは実寸のまま。
+   収まりきらない極端に低いウィンドウでは、切り捨てずにこの中でスクロールさせる。 */
 .app-shell {
-  min-height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: auto;
   padding: 24px;
   transition: background 0.2s ease, color 0.2s ease;
 }
@@ -37,8 +42,13 @@ h1, h2, p { margin-top: 0; }
   color: var(--white);
   background:
     radial-gradient(circle at 14% 0, var(--danger-red) 0 190px, transparent 191px),
-    linear-gradient(180deg, var(--black) 0, var(--black) 430px, var(--white) 431px),
-    var(--white);
+    var(--black);
+}
+
+/* danger-mode は #appShell に付くが、body より要素が短い場合に body の明るい背景が
+   下に覗く。ビューポート全体を黒で塗るため body 側も合わせて切り替える。 */
+body:has(.app-shell.danger-mode) {
+  background: var(--black);
 }
 
 .topbar, .main-card, .signals-card, .alert-banner {
@@ -83,8 +93,10 @@ h1, h2, p { margin-top: 0; }
   box-shadow: 0 18px 0 var(--danger-red);
 }
 
+/* topbar と同じ黒。白地にするとロゴの透過部分が箱として浮き、
+   アイコンの間に隙間が見えてしまう。 */
 .danger-mode .brand-lockup {
-  background: var(--white);
+  background: var(--black);
 }
 
 .danger-mode .brand-lockup img {
@@ -222,6 +234,15 @@ button:disabled {
   grid-template-columns: 340px 1fr;
   gap: 18px;
   padding: 34px 0 26px;
+  /* grid 既定の min-height:auto だと中身の実寸で押し広げられ、1fr が効かない */
+  min-height: 0;
+}
+
+/* 発話ログを残り高さいっぱいに伸ばすため、カード自体を縦フレックスにする */
+.transcript-block {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .score-block, .transcript-block, .signals-card {
@@ -368,10 +389,22 @@ meter::-webkit-meter-even-less-good-value { background: var(--orange); }
   background: color-mix(in srgb, var(--danger-red) 30%, var(--black));
 }
 
+/* 高さは画面の余りに追従させ、発話が増えてもこの中だけでスクロールさせる。
+   app.js の renderUtterances() が scrollTop で最新行まで送るのもこの領域が前提。 */
 .utterance-list {
-  min-height: 180px;
+  flex: 1;
+  /* 0 にしないと余りが足りないときカードの外へはみ出す。縮む側の責任はここが持つ */
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   margin: 0;
   padding-left: 22px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--black) 30%, var(--white)) transparent;
+}
+
+.danger-mode .utterance-list {
+  scrollbar-color: var(--danger-red) transparent;
 }
 
 .utterance-list li {
@@ -431,7 +464,7 @@ meter::-webkit-meter-even-less-good-value { background: var(--orange); }
 }
 
 .signals-card {
-  margin-bottom: 28px;
+  margin-bottom: 0;
 }
 
 .signal-grid {
@@ -484,7 +517,81 @@ meter::-webkit-meter-even-less-good-value { background: var(--orange); }
   line-height: 1.5;
 }
 
+/* 縦が狭いノート画面(1366x768 等)向け。実寸のままだと topbar と検知シグナルだけで
+   画面を使い切り、発話ログの取り分が無くなる。各パーツを詰めて場所を空ける。 */
+@media (min-width: 961px) and (max-height: 900px) {
+  .topbar {
+    gap: 20px;
+    padding: 14px 20px;
+  }
+
+  .brand-lockup img {
+    width: min(116px, 100%);
+  }
+
+  h1 {
+    font-size: clamp(1.5rem, 2.2vw, 2.1rem);
+    margin-bottom: 0;
+  }
+
+  .eyebrow {
+    margin-bottom: 4px;
+  }
+
+  .main-card {
+    padding: 16px 0 14px;
+  }
+
+  .score-block, .transcript-block, .signals-card {
+    padding: 18px;
+  }
+
+  .score-row {
+    margin: 10px 0 8px;
+  }
+
+  #scoreValue {
+    font-size: 3.4rem;
+  }
+
+  #riskMessage {
+    margin-top: 12px;
+  }
+
+  .section-title {
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+  }
+
+  .signal-card {
+    min-height: 0;
+  }
+
+  .signal-card strong {
+    margin: 2px 0;
+    font-size: 1.5rem;
+  }
+}
+
 @media (max-width: 960px) {
+  /* 1カラムに畳まれるとカードの実寸だけで画面を超える。画面フィットは諦めて
+     従来どおり縦に流し、発話ログのみ固定高でスクロールさせる。 */
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    display: block;
+    overflow: visible;
+  }
+
+  .utterance-list {
+    flex: none;
+    height: 260px;
+  }
+
+  .signals-card {
+    margin-bottom: 28px;
+  }
+
   .topbar {
     grid-template-columns: 170px 1fr;
   }
@@ -517,6 +624,10 @@ meter::-webkit-meter-even-less-good-value { background: var(--orange); }
   .brand-lockup {
     width: 164px;
     justify-self: center;
+  }
+
+  .utterance-list {
+    height: 220px;
   }
 
   .manual-form {
